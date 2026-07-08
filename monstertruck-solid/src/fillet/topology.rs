@@ -171,6 +171,15 @@ pub(super) fn find_shared_face_with_front_edge(
     shell: &Shell,
     wire: &Wire,
 ) -> Option<FaceBoundaryEdgeIndex> {
+    // A wire needs at least 2 edges to have a front/back pair whose shared
+    // face can be searched for below; `wire[0]`/`wire[1]` would otherwise
+    // panic on a wire shortened to 0 or 1 edges (e.g. a multi-edge chain
+    // whose edges failed to re-resolve after an earlier chain's mutation).
+    // Callers (`fillet_along_wire`) surface this as `FilletError::
+    // SharedFaceNotFound`, which triggers the existing per-edge fallback.
+    if wire.len() < 2 {
+        return None;
+    }
     shell.iter().enumerate().find_map(|(face_idx, face)| {
         let mut boundary_iter = face.boundary_iters().into_iter().enumerate();
         boundary_iter.find_map(|(boundary_idx, boundary_iter)| {
