@@ -30,6 +30,19 @@ pub enum Error {
     /// so the plane of the arc is under-determined.
     #[error("circular-arc tangent is parallel to the chord between the arc endpoints.")]
     CircularArcTangentParallelToChord,
+    /// A path sweep was requested with zero divisions.
+    /// cf. [`path_sweep::try_path_sweep`](../path_sweep/fn.try_path_sweep.html)
+    #[error("a path sweep needs at least 1 division.")]
+    TooFewDivisions,
+    /// A path sweep's tangent vector is zero or near-zero at some sample parameter,
+    /// so a sweep frame could not be computed.
+    /// cf. [`path_sweep::try_path_sweep`](../path_sweep/fn.try_path_sweep.html)
+    #[error("path sweep tangent is degenerate (zero or near-zero) at some sample.")]
+    DegenerateSweepTangent,
+    /// A path sweep was requested along a periodic (closed) path, which is not yet supported.
+    /// cf. [`path_sweep::try_path_sweep`](../path_sweep/fn.try_path_sweep.html)
+    #[error("path sweep along a closed (periodic) path is not yet supported.")]
+    ClosedPathNotSupported,
 }
 
 #[test]
@@ -50,6 +63,19 @@ fn print_messages() {
     writeln!(&mut std::io::stderr(), "{}\n", Error::OpenWire).unwrap();
     writeln!(&mut std::io::stderr(), "{}\n", Error::AmbiguousNesting).unwrap();
     writeln!(&mut std::io::stderr(), "{}\n", Error::NoOuterLoop).unwrap();
+    writeln!(&mut std::io::stderr(), "{}\n", Error::TooFewDivisions).unwrap();
+    writeln!(
+        &mut std::io::stderr(),
+        "{}\n",
+        Error::DegenerateSweepTangent
+    )
+    .unwrap();
+    writeln!(
+        &mut std::io::stderr(),
+        "{}\n",
+        Error::ClosedPathNotSupported
+    )
+    .unwrap();
     writeln!(
         &mut std::io::stderr(),
         "*******************************************************"
