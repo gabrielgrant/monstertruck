@@ -14,6 +14,11 @@ use monstertruck_traits::SnapCurveEndpoints;
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+// `std::time::Instant::now()` panics on `wasm32-unknown-unknown`. The
+// `web_time` crate is std-compatible on native and falls back to
+// `performance.now()` in the browser, so all the `Instant::now()` /
+// `.elapsed()` call sites below stay unchanged.
+use web_time::Instant;
 
 type ModelSurfaceCurve = SurfaceCurve<
     Box<Curve>,
@@ -330,7 +335,7 @@ impl ParameterDivision1D for Curve {
     type Point = Point3;
     fn parameter_division(&self, range: (f64, f64), tol: f64) -> (Vec<f64>, Vec<Self::Point>) {
         let debug_profile = std::env::var("MT_PROFILE_CURVE_DIVISION").is_ok();
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let result = match self {
             Curve::Line(curve) => curve.parameter_division(range, tol),
             Curve::BsplineCurve(curve) => linear_bspline_division(curve, range)
@@ -730,7 +735,7 @@ impl Curve {
         tolerance: f64,
     ) -> Option<ParameterCurve<Curve2D, Box<Surface>>> {
         let debug_profile = std::env::var("MT_PROFILE_PARAMETER_CURVE_ON").is_ok();
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let exact = self.exact_parameter_boundary_2d(surface);
         let exact_hit = exact.is_some();
         let result = exact.or_else(|| {
