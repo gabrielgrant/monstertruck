@@ -106,6 +106,8 @@ pub mod errors;
 mod geom_impls;
 mod mapped;
 mod multi_sweep;
+/// Sweeps a closed profile wire along a 3D path with a rotation-minimizing frame.
+pub mod path_sweep;
 /// primitive shapes
 pub mod primitive;
 /// Planar profile normalization and solid construction from profiles.
