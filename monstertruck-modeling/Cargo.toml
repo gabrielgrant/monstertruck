@@ -17,6 +17,10 @@ fillet = ["monstertruck-solid"]
 font = ["dep:ttf-parser"]
 
 [dependencies]
+# `web_time::Instant` is `std::time::Instant` on native and falls back
+# to `performance.now()` on wasm32-unknown-unknown (where std::time::*
+# panics).
+web-time = { workspace = true }
 derive_more = { workspace = true }
 itertools = { workspace = true }
 rustc-hash = { workspace = true }
