@@ -7,6 +7,8 @@ use super::types::*;
 
 use monstertruck_traits::ParametricSurface;
 
+use monstertruck_topology::shell::ShellCondition;
+
 use super::{
     FilletOptions, FilletProfile, FilletRadius, fillet, fillet_along_wire, fillet_edges,
     fillet_edges_by_id, fillet_with_side,
@@ -2592,6 +2594,72 @@ fn fillet_edges_cuboid_top_and_bottom() {
         shell.len() >= 14,
         "expected >= 14 faces, got {}",
         shell.len()
+    );
+    let _poly = shell.robust_triangulation(0.001).to_polygon();
+}
+
+/// Fillet two edges of a closed cuboid that share a vertex but sit on two
+/// *different* faces each -- e.g. a top edge and one of the vertical edges it
+/// meets at a corner. This is the classic "round these two edges" selection a
+/// user would make interactively, and it must neither panic nor produce an
+/// invalid shell.
+#[test]
+fn fillet_edges_two_adjacent_edges_corner() {
+    let (mut shell, edge, _v) = build_6face_box();
+    // edge[0] (top front, vertex 0 -> 1) and edge[5] (front-right vertical,
+    // vertex 1 -> 5) meet at vertex 1.
+    let ids = [edge[0].id(), edge[5].id()];
+    let opts = FilletOptions {
+        radius: FilletRadius::Constant(0.15),
+        ..Default::default()
+    };
+    fillet_edges_by_id(&mut shell, &ids, Some(&opts)).unwrap();
+    assert_eq!(
+        shell.shell_condition(),
+        ShellCondition::Closed,
+        "filleting two vertex-adjacent edges of a closed cuboid must yield a closed (manifold) shell"
+    );
+    let _poly = shell.robust_triangulation(0.001).to_polygon();
+}
+
+/// Fillet every edge of a fully closed cuboid in one call. This is the
+/// "round all the edges" request that a naive selection (or a "fillet whole
+/// body" feature) makes, and every pair of edges sharing a vertex is present
+/// by construction. Regression test for the `find_shared_face_with_front_edge`
+/// out-of-bounds panic: a chain whose edges fail to re-resolve after an
+/// earlier chain's mutation shrinks the wire handed to `fillet_along_wire` to
+/// length 1, and `wire[1]` used to index out of bounds.
+///
+/// This must not panic and must not degrade into an `Irregular` shell (an
+/// edge shared by more than two faces -- true corruption). It is *not* yet
+/// held to `ShellCondition::Closed`: the top and bottom edge loops are each
+/// closed 4-edge wire chains, and `fillet_along_wire_closed` cuts each
+/// adjacent side face's shared vertical edge independently per side face
+/// rather than reconciling the two cuts into one shared edge, which already
+/// leaves `fillet_edges_cuboid_top_4` and `fillet_edges_cuboid_top_and_bottom`
+/// above at `ShellCondition::Oriented` rather than `Closed`. That is a
+/// pre-existing limitation of the wire-fillet corner geometry, not something
+/// introduced by (or fully fixable within) this bounds-check fix -- see the
+/// module docs.
+#[test]
+fn fillet_edges_all_twelve() {
+    let (mut shell, edge, _v) = build_6face_box();
+    let initial_face_count = shell.len();
+    let ids: Vec<EdgeId> = edge.iter().map(|e| e.id()).collect();
+    let opts = FilletOptions {
+        radius: FilletRadius::Constant(0.1),
+        ..Default::default()
+    };
+    fillet_edges_by_id(&mut shell, &ids, Some(&opts)).unwrap();
+    assert!(
+        shell.len() > initial_face_count,
+        "expected at least some edges to be rounded"
+    );
+    assert_ne!(
+        shell.shell_condition(),
+        ShellCondition::Irregular,
+        "filleting all 12 edges of a closed cuboid must not corrupt the shell \
+         (an edge shared by more than two faces)"
     );
     let _poly = shell.robust_triangulation(0.001).to_polygon();
 }
