@@ -465,6 +465,18 @@ impl ToSameGeometry<Curve> for Processor<TrimmedCurve<UnitCircle<Point3>>, Matri
     fn to_same_geometry(&self) -> Curve { Curve::NurbsCurve(self.to_same_geometry()) }
 }
 
+// Lossless extraction of a straight line, used by planar-only algorithms
+// such as `monstertruck_solid::shell` and `monstertruck_solid::draft`.
+impl TryFrom<Curve> for Line<Point3> {
+    type Error = ();
+    fn try_from(curve: Curve) -> std::result::Result<Self, ()> {
+        match curve {
+            Curve::Line(line) => Ok(line),
+            _ => Err(()),
+        }
+    }
+}
+
 impl ToSameGeometry<Curve> for BsplineCurve<Point3> {
     #[inline]
     fn to_same_geometry(&self) -> Curve { Curve::from(self.clone()) }
@@ -1144,6 +1156,18 @@ impl IncludeCurve<Curve> for Plane {
 
 impl ToSameGeometry<Surface> for Plane {
     fn to_same_geometry(&self) -> Surface { (*self).into() }
+}
+
+// Lossless extraction of a plane, used by planar-only algorithms such as
+// `monstertruck_solid::shell` and `monstertruck_solid::draft`.
+impl TryFrom<Surface> for Plane {
+    type Error = ();
+    fn try_from(surface: Surface) -> std::result::Result<Self, ()> {
+        match surface {
+            Surface::Plane(plane) => Ok(plane),
+            _ => Err(()),
+        }
+    }
 }
 
 impl ToSameGeometry<Surface> for RevolutionSurface<Curve> {
