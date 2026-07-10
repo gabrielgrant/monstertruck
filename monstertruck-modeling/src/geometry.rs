@@ -471,7 +471,7 @@ impl ToSameGeometry<Curve> for Processor<TrimmedCurve<UnitCircle<Point3>>, Matri
 }
 
 // Lossless extraction of a straight line, used by planar-only algorithms
-// such as `monstertruck_solid::shell`.
+// such as `monstertruck_solid::shell` and `monstertruck_solid::draft`.
 impl TryFrom<Curve> for Line<Point3> {
     type Error = ();
     fn try_from(curve: Curve) -> std::result::Result<Self, ()> {
@@ -1164,7 +1164,7 @@ impl ToSameGeometry<Surface> for Plane {
 }
 
 // Lossless extraction of a plane, used by planar-only algorithms such as
-// `monstertruck_solid::shell`.
+// `monstertruck_solid::shell` and `monstertruck_solid::draft`.
 impl TryFrom<Surface> for Plane {
     type Error = ();
     fn try_from(surface: Surface) -> std::result::Result<Self, ()> {
