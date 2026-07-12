@@ -1,7 +1,7 @@
 use monstertruck_geometry::prelude::*;
 use monstertruck_meshing::prelude::*;
 use monstertruck_modeling::{
-    Face as MFace, Shell as MShell, Solid as MSolid, Surface as MSurface, primitive,
+    Face as MFace, Shell as MShell, Solid as MSolid, Surface as MSurface, builder, primitive,
 };
 use monstertruck_topology::shell::ShellCondition;
 
@@ -30,6 +30,30 @@ fn tessellated_volume(solid: &MSolid) -> f64 { solid.triangulation(0.01).to_poly
 /// test.
 fn bottom_plane() -> Plane { Plane::xy() }
 
+/// Axis-aligned unit cube built via an extrude-chain (`vertex` -> `extrude`
+/// along x -> `extrude` along y -> `extrude` along z), mirroring the
+/// construction `openshape`'s `build_cuboid` uses.
+///
+/// Unlike [`unit_cube`] (`primitive::cuboid`), whose six faces are each
+/// constructed directly from an explicitly hand-ordered `Plane::new(p, q, r)`
+/// so that every face's `orientation()` is `true`, this construction routes
+/// two of the side faces (the ones swept, by the third extrude, from the
+/// "closing" edges the *second* extrude introduced to join the swept edge to
+/// its translated copy) through `ExtrudeConnector`, which builds each side
+/// face's plane from the swept edge's own direction and the sweep vector in
+/// a fixed order regardless of which way is "outward". For two of the four
+/// side faces that raw order happens to be inward, so the topology layer
+/// marks those faces `orientation() == false` and corrects the *reported*
+/// (`oriented_surface()`) normal by swapping the plane's `u`/`v` axes at
+/// query time -- this is the shape that used to reproduce the
+/// `drafted_shell` plane-orientation bug fixed in this module.
+fn unit_cube_extrude_chain() -> MSolid {
+    let v = builder::vertex(Point3::origin());
+    let e = builder::extrude(&v, Vector3::unit_x());
+    let f = builder::extrude(&e, Vector3::unit_y());
+    builder::extrude(&f, Vector3::unit_z())
+}
+
 #[test]
 fn draft_all_sides_gives_frustum_volume() {
     let cube = unit_cube();
@@ -51,6 +75,58 @@ fn draft_all_sides_gives_frustum_volume() {
     );
 
     // Each side moves inward by tan(5°) at the top; the base is untouched.
+    let top_side = 1.0 - 2.0 * 5.0_f64.to_radians().tan();
+    let (area_bottom, area_top) = (1.0, top_side * top_side);
+    let expected = (area_bottom + area_top + (area_bottom * area_top).sqrt()) / 3.0;
+    let volume = tessellated_volume(&drafted);
+    assert!(
+        (volume - expected).abs() < VOLUME_EPS,
+        "volume {volume}, expected {expected}"
+    );
+}
+
+/// Regression test for a fork bug: two of `unit_cube_extrude_chain`'s four
+/// side faces have `orientation() == false` (see that function's doc
+/// comment). `drafted_shell` used to rebuild every drafted face's surface
+/// via `plane_through`, which always returns a plane whose *own* normal is
+/// already the correct outward direction (it is built directly from
+/// `face_plane`'s already-oriented-and-rotated normal), but then paired that
+/// always-correct plane with the face's *unflipped* `absolute_boundaries()`
+/// wire and re-applied the original face's orientation bit on top. For a
+/// `false`-orientation face that re-applied flip inverted the (already
+/// correct) new plane's effective normal instead of correcting the wire,
+/// silently drafting that face's surface inward while its edges/vertices
+/// were still moved correctly outward -- the shell stayed a valid closed
+/// manifold (so nothing errored), but its enclosed volume came out wrong
+/// (`0.9125...` instead of the frustum's `0.8352...`) because the
+/// inward-facing face's triangles contributed a wrong-signed term to the
+/// mesh volume integral.
+#[test]
+fn draft_all_sides_gives_frustum_volume_extrude_chain_cuboid() {
+    let cube = unit_cube_extrude_chain();
+    assert!(
+        cube.boundaries()[0].iter().any(|face| !face.orientation()),
+        "test cube must contain at least one orientation()==false face to exercise the bug"
+    );
+    let sides = [
+        Vector3::unit_x(),
+        -Vector3::unit_x(),
+        Vector3::unit_y(),
+        -Vector3::unit_y(),
+    ]
+    .map(|normal| face_id_with_normal(&cube, normal));
+
+    let drafted = draft(&cube, &sides, bottom_plane(), Vector3::unit_z(), Deg(5.0)).unwrap();
+
+    assert_eq!(drafted.boundaries().len(), 1);
+    assert_eq!(drafted.boundaries()[0].len(), 6);
+    assert_eq!(
+        drafted.boundaries()[0].shell_condition(),
+        ShellCondition::Closed
+    );
+
+    // Same frustum as `draft_all_sides_gives_frustum_volume`: each side
+    // moves inward by tan(5°) at the top, the base is untouched.
     let top_side = 1.0 - 2.0 * 5.0_f64.to_radians().tan();
     let (area_bottom, area_top) = (1.0, top_side * top_side);
     let expected = (area_bottom + area_top + (area_bottom * area_top).sqrt()) / 3.0;

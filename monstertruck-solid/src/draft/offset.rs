@@ -240,8 +240,24 @@ pub(super) fn drafted_shell(
         .iter()
         .enumerate()
         .map(|(face_index, face)| {
+            // `face.boundaries()` (not `absolute_boundaries()`) is the wire
+            // already corrected for this face's orientation, so it is always
+            // outward-consistent with `face.oriented_surface()` -- the same
+            // convention `face_plane` used to compute `plane_info.normal`
+            // (via `face.oriented_surface().normal()`, rotated). `plane`
+            // below is built by `plane_through` from that already-outward
+            // normal, so pairing it with this wire and leaving the new
+            // face's orientation at its `Face::try_new` default of `true`
+            // keeps both members outward-consistent regardless of whatever
+            // orientation the *original* face happened to have; re-applying
+            // `face.orientation()` here (as a previous version of this code
+            // did, pairing the new plane with the *unflipped*
+            // `absolute_boundaries()` instead) would flip only the wire and
+            // not the (already correctly outward) surface for exactly the
+            // faces whose original orientation was `false`, silently
+            // inverting the rebuilt face's outward direction.
             let boundaries = face
-                .absolute_boundaries()
+                .boundaries()
                 .iter()
                 .map(|wire| {
                     wire.iter()
@@ -260,11 +276,8 @@ pub(super) fn drafted_shell(
                 .collect::<Result<Vec<_>>>()?;
             let plane_info = &face_planes[face_index];
             let plane = plane_through(plane_info.normal, plane_info.point);
-            let mut new_face = Face::try_new(boundaries, plane)
+            let new_face = Face::try_new(boundaries, plane)
                 .map_err(|source| DraftError::InvalidOutputTopology { source })?;
-            if !face.orientation() {
-                new_face.invert();
-            }
             Ok(new_face)
         })
         .collect::<Result<Vec<_>>>()?;
