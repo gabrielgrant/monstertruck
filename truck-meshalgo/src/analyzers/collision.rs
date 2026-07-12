@@ -156,6 +156,32 @@ fn collide_seg_triangle(seg: [Point3; 2], tri: [Point3; 3]) -> Option<Point3> {
     let aq = seg[1] - tri[0];
     let dotapnor = ap.dot(nor);
     let dotaqnor = aq.dot(nor);
+    // Signed distances of the segment's endpoints from the triangle's plane
+    // (dividing the plane-normal dot products by `|nor|` turns them from an
+    // area-scaled quantity into an actual length, so the tolerance check
+    // below is scale-correct regardless of triangle size).
+    //
+    // When both endpoints are (within tolerance) ON the triangle's plane,
+    // the segment is coplanar/tangent to the triangle rather than crossing
+    // it transversally. The parametrization of `h` below divides by
+    // `dotapnor - dotaqnor`, which is ~0 in this case: for an *exactly*
+    // shared plane this is a literal 0/0 (NaN), and for a *near*-coincident
+    // plane it's a near-0/near-0 ratio dominated by floating-point
+    // round-off, which can still land in the "colliding" branch and
+    // produce a spurious intersection point at an essentially arbitrary
+    // location along the segment. That silently corrupts the interference
+    // curve used by `truck_shapeops`' boolean ops when two faces share a
+    // coincident (or near-coincident) plane -- see e.g.
+    // https://github.com/ricosjp/truck upstream issue "boolean ops fail on
+    // coincident-plane solids". Coplanar/tangential crossings are outside
+    // the scope of this transversal segment-triangle test (this crate's
+    // sibling `truck-shapeops` documents: "faces tangent to each other are
+    // not yet supported"), so bail out cleanly instead of returning
+    // geometric noise.
+    let nor_len = nor.magnitude();
+    if (dotapnor / nor_len).so_small() && (dotaqnor / nor_len).so_small() {
+        return None;
+    }
     if dotapnor * dotaqnor > 0.0 {
         return None;
     }
