@@ -69,9 +69,28 @@ fn unit_circle_arc(angle: Rad<f64>, w0: f64, w1: f64) -> NurbsCurve<Vector4> {
     let parab_apex = n * n.dot(p0);
 
     let xt = (p0 + p1).dot(x_axis) / 2.0;
+    // The auxiliary parabola (apex `parab_apex`, axis `y_axis`) passes
+    // through both `p0` and `p1` by construction, so its curvature
+    // `k = y / x^2` can be calibrated from either point's local
+    // `(x_axis, y_axis)` coordinates -- in exact arithmetic they agree.
+    // In `f64`, `d0`/`d1` are each a difference of two vectors of
+    // comparable magnitude to `p0`/`p1`, so whichever of `x0`, `x1` is
+    // small is a near-total cancellation, leaving `k` with only as many
+    // correct digits as `x0`/`x1` has leading zeros' worth fewer than
+    // `f64`'s ~15-16; squaring that small denominator in `1 / x^2` then
+    // amplifies the loss into `yt`. Calibrating from whichever of `p0`,
+    // `p1` has the larger `|local x|` avoids the near-zero denominator
+    // and keeps `k` accurate to `f64` precision regardless of `angle`,
+    // `w0`, `w1`.
     let d0 = p0 - parab_apex;
+    let d1 = p1 - parab_apex;
     let (x0, y0) = (d0.dot(x_axis), d0.dot(y_axis));
-    let yt = y0 / (x0 * x0) * xt * xt;
+    let (x1, y1) = (d1.dot(x_axis), d1.dot(y_axis));
+    let (x_cal, y_cal) = match x0.abs() >= x1.abs() {
+        true => (x0, y0),
+        false => (x1, y1),
+    };
+    let yt = y_cal / (x_cal * x_cal) * xt * xt;
     let pt = parab_apex + xt * x_axis + yt * y_axis;
 
     let c = 2.0 * pt - (p0 + p1) / 2.0;
@@ -101,6 +120,54 @@ fn unit_circle_info() {
     let uc = unit_circle_arc(Rad(PI), 1.0, 1.0);
     assert_eq!(uc.knot_vector(), &unit_circle_knot_vector());
     assert_eq!(uc.control_points().len(), number_of_cpts_of_unit_circle());
+}
+
+/// Deterministic minimal reproduction of a `test_unit_circle` proptest
+/// shrink (`angle = 1.5378885690522304, w0 = 2.392162112902661, w1 =
+/// 4.634199422340766`): `unit_circle_arc` calibrates the auxiliary
+/// parabola's curvature from one of `p0`/`p1`'s coordinates in the local
+/// `(x_axis, y_axis)` frame (`x = d.dot(x_axis)`, `y = d.dot(y_axis)`,
+/// `k = y / x.powi(2)`, `d = {p0,p1} - parab_apex`). Before the fix this
+/// picked `p0` unconditionally; for this input `p0`'s local `x0` happens to
+/// be ~1.2e-3 -- a difference of two vectors of magnitude ~2.39 that agree
+/// to about six significant figures -- so `x0` (and therefore `k`) carried
+/// only about six correct digits despite `f64` having ~15-16. That error
+/// was then squared into the curve's middle control point through `k`'s
+/// `1 / x0^2` term, landing the mid-arc point ~1.4e-6 off the unit circle:
+/// about 1e6 times the `newton::solve` residual (~1e-13) that fed it, and
+/// enough to clear this module's `TOLERANCE`-based (`1e-6`)
+/// `prop_assert_near!` checks in `test_unit_circle` on unlucky shrinks.
+/// `p1`'s local `x1` is ~4.6 for this same input -- nowhere near the
+/// cancellation regime -- so calibrating from whichever of `p0`/`p1` has
+/// the larger `|local x|` (this function's fix) keeps `k`, and so the
+/// final curve, accurate to within a couple of orders of magnitude of
+/// `newton::solve`'s own residual instead of `TOLERANCE`. The bound below
+/// (`1e-9`) is three orders of magnitude tighter than the `1e-6` a
+/// cancellation-limited calibration could just barely clear, while leaving
+/// headroom above the observed ~7.5e-13 worst case for other inputs and
+/// platforms.
+#[test]
+fn unit_circle_arc_accurate_near_degenerate_p0_calibration() {
+    let angle = 1.5378885690522304_f64;
+    let (w0, w1) = (2.392162112902661_f64, 4.634199422340766_f64);
+    let uc = unit_circle_arc(Rad(angle), w0, w1);
+    const N: usize = 10;
+    const BOUND: f64 = 1.0e-9;
+    let worst = (0..=N)
+        .map(|i| {
+            let t = i as f64 / N as f64;
+            (uc.evaluate(t).to_vec().magnitude() - 1.0).abs()
+        })
+        .fold(0.0_f64, f64::max);
+    assert!(
+        worst < BOUND,
+        "unit_circle_arc({angle}, {w0}, {w1}) departs from the unit circle by {worst}, \
+         which exceeds this test's {BOUND} bound (itself far tighter than this module's \
+         general-purpose TOLERANCE of {TOLERANCE}); this reproduces the `test_unit_circle` \
+         proptest flake caused by catastrophic cancellation in a parabola-curvature \
+         calibration taken from a single point instead of whichever of p0/p1 is \
+         better-conditioned"
+    );
 }
 
 #[cfg(test)]
