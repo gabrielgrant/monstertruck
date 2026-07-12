@@ -88,13 +88,30 @@ fn j_near_touching_epsilon_overlap_fails() {
 }
 
 /// (f) Nested cubes sharing 3 faces at the same corner (origin): full
-/// containment plus 3 coincident planes. CONFIRMED: panics inside
-/// truck-topology with "This wire is not simple" rather than returning
-/// `None`, unlike the two-plane touching case which cleanly returns `None`.
+/// containment plus 3 coincident planes.
+///
+/// Before the `divide_one_face` fix (truck-shapeops/src/transversal/divide_face/mod.rs),
+/// this panicked inside truck-topology with "This wire is not simple" in
+/// debug builds -- and in *release* builds took the `Face::new_unchecked`
+/// path instead (via `Face::debug_new`), which performs no validation at
+/// all and would have silently produced a face with a self-intersecting
+/// boundary rather than erroring. `divide_one_face` now uses
+/// `Face::try_new` and propagates failure as `None`, so this is a clean,
+/// documented failure (same `Expect::Err`-style outcome as the other
+/// coincident-plane cases) in both build profiles instead of a panic or
+/// silent corruption.
 #[test]
-#[should_panic(expected = "wire is not simple")]
-fn f_nested_shared_corner_panics() {
+fn f_nested_shared_corner_no_longer_panics() {
     let a = cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
     let b = cuboid([0.0, 0.0, 0.0], [4.0, 4.0, 4.0]);
-    let _ = truck_shapeops::or(&a, &b, 0.05);
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| truck_shapeops::or(&a, &b, 0.05)));
+    let result = result.unwrap_or_else(|_| {
+        panic!("nested-corner union panicked (regression: divide_one_face's Face::try_new fix should turn this into a clean None)")
+    });
+    assert!(
+        result.is_none(),
+        "nested-corner union expected None (documented degeneracy), got Some \
+         -- if truck-shapeops fixed coincident-plane booleans upstream, update this test"
+    );
 }
