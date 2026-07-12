@@ -1,6 +1,8 @@
 use monstertruck_topology::errors::Error as TopologyError;
 use thiserror::Error;
 
+use crate::planar::PlanarError;
+
 /// Errors that can occur during draft (mold-taper) operations.
 #[derive(Debug, Error)]
 pub enum DraftError {
@@ -72,4 +74,15 @@ pub enum DraftError {
         #[source]
         source: TopologyError,
     },
+}
+
+impl From<PlanarError> for DraftError {
+    fn from(error: PlanarError) -> Self {
+        match error {
+            PlanarError::DegenerateVertex => DraftError::DegenerateVertex,
+            PlanarError::UnsupportedVertexDegree(degree) => {
+                DraftError::UnsupportedVertexDegree(degree)
+            }
+        }
+    }
 }

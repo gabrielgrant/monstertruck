@@ -20,6 +20,7 @@ pub use transversal::{
     ShapeOpsCurve, ShapeOpsError, ShapeOpsSurface, and, difference, or, symmetric_difference,
 };
 mod alternative;
+mod planar;
 pub mod shell;
 pub use shell::{ShellError, ThickenableCurve, ThickenableSurface, hollow, thicken};
 pub mod fillet;

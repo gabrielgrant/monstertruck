@@ -2,14 +2,30 @@ use monstertruck_geometry::prelude::*;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::SmallVec;
 
+use crate::planar::{dedup_constraints, intersect_planes};
+
 use super::error::ShellError;
 use super::types::*;
 
 type Result<T> = std::result::Result<T, ShellError>;
 
-/// A plane constraint on a vertex offset: the offset displacement `w` must
-/// satisfy `normal . w = -offset` (move `offset` against the face normal).
-type Constraint = (Vector3, f64);
+/// A face's offset: its (outward, oriented) unit normal, the scalar offset
+/// applied against that normal, and the face's original plane distance
+/// (`normal . point` for any point on the face's plane) -- together these
+/// give the face's absolute offset-plane equation
+/// `normal . x = origin_distance - offset`, the form the shared
+/// [`planar`](crate::planar) solver consumes.
+#[derive(Clone, Copy)]
+struct FaceOffset {
+    normal: Vector3,
+    offset: f64,
+    origin_distance: f64,
+}
+
+impl FaceOffset {
+    /// The face's absolute offset-plane equation.
+    fn plane_eq(&self) -> (Vector3, f64) { (self.normal, self.origin_distance - self.offset) }
+}
 
 /// Offset images of every vertex, edge, and face of a planar shell.
 ///
@@ -51,62 +67,6 @@ impl OffsetElements {
     }
 }
 
-/// Solves for the displacement `w` with `n_i . w = -t_i` for every
-/// constraint `(n_i, t_i)`.
-///
-/// With one constraint the unique minimal solution `-t n` is used; with two,
-/// the solution in `span(n_0, n_1)` (so `w` stays perpendicular to the
-/// shared edge of the two faces); with three, the unique intersection of the
-/// three offset planes.
-fn solve_offset(constraints: &[Constraint]) -> Result<Vector3> {
-    match *constraints {
-        [(normal, offset)] => Ok(-offset * normal),
-        [(normal0, offset0), (normal1, offset1)] => {
-            let cos = normal0.dot(normal1);
-            let det = 1.0 - cos * cos;
-            if det.abs() < TOLERANCE2 {
-                Err(ShellError::DegenerateVertex)
-            } else {
-                let a = (cos * offset1 - offset0) / det;
-                let b = (cos * offset0 - offset1) / det;
-                Ok(a * normal0 + b * normal1)
-            }
-        }
-        [(normal0, offset0), (normal1, offset1), (normal2, offset2)] => {
-            let matrix = Matrix3::from_cols(normal0, normal1, normal2).transpose();
-            if matrix.determinant().abs() < TOLERANCE {
-                Err(ShellError::DegenerateVertex)
-            } else {
-                // SAFETY: the determinant was just checked to be non-zero.
-                let inverse = matrix.invert().unwrap();
-                Ok(inverse * -Vector3::new(offset0, offset1, offset2))
-            }
-        }
-        _ => Err(ShellError::UnsupportedVertexDegree(constraints.len())),
-    }
-}
-
-/// Collects the distinct plane constraints of a vertex, merging near-equal
-/// normals and rejecting coplanar faces that request conflicting offsets.
-fn vertex_constraints(
-    face_data: &[Constraint],
-    face_indices: &[usize],
-) -> Result<SmallVec<[Constraint; 4]>> {
-    let mut constraints: SmallVec<[Constraint; 4]> = SmallVec::new();
-    for &face_index in face_indices {
-        let (normal, offset) = face_data[face_index];
-        match constraints
-            .iter()
-            .find(|&&(other, _)| (other - normal).magnitude2() < TOLERANCE2)
-        {
-            Some(&(_, other_offset)) if (other_offset - offset).abs() < TOLERANCE => {}
-            Some(_) => return Err(ShellError::DegenerateVertex),
-            None => constraints.push((normal, offset)),
-        }
-    }
-    Ok(constraints)
-}
-
 /// Computes the offset image of every vertex, edge, and face of `shell`.
 ///
 /// Each face is offset by `thickness` against its oriented normal, except
@@ -118,7 +78,7 @@ pub(super) fn offset_elements(
     thickness: f64,
     open_faces: &HashSet<usize>,
 ) -> Result<OffsetElements> {
-    let face_data: Vec<Constraint> = shell
+    let face_data: Vec<FaceOffset> = shell
         .iter()
         .enumerate()
         .map(|(face_index, face)| {
@@ -126,7 +86,13 @@ pub(super) fn offset_elements(
                 true => 0.0,
                 false => thickness,
             };
-            (face.oriented_surface().normal(), offset)
+            let normal = face.oriented_surface().normal();
+            let origin_distance = normal.dot(face.surface().origin().to_vec());
+            FaceOffset {
+                normal,
+                offset,
+                origin_distance,
+            }
         })
         .collect();
 
@@ -145,9 +111,12 @@ pub(super) fn offset_elements(
     let vertices = vertex_faces
         .into_iter()
         .map(|(vertex_id, (vertex, face_indices))| {
-            let constraints = vertex_constraints(&face_data, &face_indices)?;
-            let displacement = solve_offset(&constraints)?;
-            Ok((vertex_id, Vertex::new(vertex.point() + displacement)))
+            let raw = face_indices
+                .iter()
+                .map(|&index| face_data[index].plane_eq());
+            let constraints = dedup_constraints(raw)?;
+            let new_point = intersect_planes(vertex.point(), &constraints)?;
+            Ok((vertex_id, Vertex::new(new_point)))
         })
         .collect::<Result<HashMap<_, _>>>()?;
 
@@ -178,7 +147,7 @@ pub(super) fn offset_elements(
         .iter()
         .enumerate()
         .map(|(face_index, face)| {
-            let (normal, offset) = face_data[face_index];
+            let FaceOffset { normal, offset, .. } = face_data[face_index];
             let displacement = -offset * normal;
             let boundaries = face
                 .absolute_boundaries()
