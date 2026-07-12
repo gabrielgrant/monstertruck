@@ -1,6 +1,8 @@
 use monstertruck_topology::errors::Error as TopologyError;
 use thiserror::Error;
 
+use crate::planar::PlanarError;
+
 /// Errors that can occur during shell/thicken operations.
 #[derive(Debug, Error)]
 pub enum ShellError {
@@ -66,4 +68,15 @@ pub enum ShellError {
         #[source]
         source: TopologyError,
     },
+}
+
+impl From<PlanarError> for ShellError {
+    fn from(error: PlanarError) -> Self {
+        match error {
+            PlanarError::DegenerateVertex => ShellError::DegenerateVertex,
+            PlanarError::UnsupportedVertexDegree(degree) => {
+                ShellError::UnsupportedVertexDegree(degree)
+            }
+        }
+    }
 }

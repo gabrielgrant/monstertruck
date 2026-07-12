@@ -2,14 +2,12 @@ use monstertruck_geometry::prelude::*;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::SmallVec;
 
+use crate::planar::{dedup_constraints, intersect_planes};
+
 use super::error::DraftError;
 use super::types::*;
 
 type Result<T> = std::result::Result<T, DraftError>;
-
-/// A plane equation `normal . x = distance`, in absolute (world)
-/// coordinates. `normal` is always a unit vector.
-type PlaneEq = (Vector3, f64);
 
 /// A face's replacement plane: the plane equation used to reconcile shared
 /// vertices, plus a point known to lie on that plane, used to rebuild the
@@ -19,79 +17,6 @@ struct FacePlane {
     normal: Vector3,
     distance: f64,
     point: Point3,
-}
-
-/// Finds the point satisfying every plane equation in `constraints`, using
-/// `reference` to resolve the under-determined cases (1 or 2 constraints).
-/// This is the same plane-intersection problem the shell/thicken module
-/// solves for its own vertex reconciliation, generalized from "offset every
-/// plane by a scalar along its own normal" to "replace each plane with an
-/// arbitrary new one": here `constraints` carries each adjacent face's
-/// possibly-rotated plane directly, in absolute `(normal, distance)` form,
-/// rather than a per-face scalar offset.
-///
-/// - **1 constraint**: the orthogonal projection of `reference` onto the
-///   plane.
-/// - **2 constraints**: the point reached from `reference` by a displacement
-///   confined to `span(normal0, normal1)` -- perpendicular to the planes'
-///   shared line, so a `reference` that lies on both planes' original shared
-///   edge keeps that edge's direction.
-/// - **3 constraints**: the unique intersection point of the three planes
-///   (independent of `reference`).
-fn intersect_planes(reference: Point3, constraints: &[PlaneEq]) -> Result<Point3> {
-    match *constraints {
-        [(normal, distance)] => {
-            let excess = normal.dot(reference.to_vec()) - distance;
-            Ok(reference - excess * normal)
-        }
-        [(normal0, distance0), (normal1, distance1)] => {
-            let cos = normal0.dot(normal1);
-            let det = 1.0 - cos * cos;
-            if det.abs() < TOLERANCE2 {
-                Err(DraftError::DegenerateVertex)
-            } else {
-                let local0 = distance0 - normal0.dot(reference.to_vec());
-                let local1 = distance1 - normal1.dot(reference.to_vec());
-                let a = (local0 - cos * local1) / det;
-                let b = (local1 - cos * local0) / det;
-                Ok(reference + a * normal0 + b * normal1)
-            }
-        }
-        [
-            (normal0, distance0),
-            (normal1, distance1),
-            (normal2, distance2),
-        ] => {
-            let matrix = Matrix3::from_cols(normal0, normal1, normal2).transpose();
-            if matrix.determinant().abs() < TOLERANCE {
-                Err(DraftError::DegenerateVertex)
-            } else {
-                // SAFETY: the determinant was just checked to be non-zero.
-                let inverse = matrix.invert().unwrap();
-                Ok(Point3::from_vec(
-                    inverse * Vector3::new(distance0, distance1, distance2),
-                ))
-            }
-        }
-        _ => Err(DraftError::UnsupportedVertexDegree(constraints.len())),
-    }
-}
-
-/// Collects the distinct plane constraints of a vertex, merging near-equal
-/// normals and rejecting coplanar faces that request conflicting planes.
-fn dedup_constraints(raw: impl IntoIterator<Item = PlaneEq>) -> Result<SmallVec<[PlaneEq; 4]>> {
-    let mut constraints: SmallVec<[PlaneEq; 4]> = SmallVec::new();
-    for (normal, distance) in raw {
-        match constraints
-            .iter()
-            .find(|&&(other, _)| (other - normal).magnitude2() < TOLERANCE2)
-        {
-            Some(&(_, other_distance)) if (other_distance - distance).abs() < TOLERANCE => {}
-            Some(_) => return Err(DraftError::DegenerateVertex),
-            None => constraints.push((normal, distance)),
-        }
-    }
-    Ok(constraints)
 }
 
 /// Builds a plane through `point` with the given unit `normal`, choosing an
